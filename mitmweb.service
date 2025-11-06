@@ -1,18 +1,16 @@
 [Unit]
-Description=mitmweb daemon (venv)
+Description=mitmweb proxy 24/7
 After=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/var/lib/mitmweb
-ExecStart=/root/venv-mitmproxy/bin/python /root/venv-mitmproxy/bin/mitmweb --web-host 0.0.0.0 --web-port 8081 --listen-port 8080 --set web_password=DeinStarkesPasswort --set block_global=false
+WorkingDirectory=/root/venv-mitmproxy
+# Virtualenv aktivieren und mitmweb starten
+ExecStart=/bin/bash -c 'source /root/venv-mitmproxy/bin/activate && mitmweb --web-host 0.0.0.0 --listen-port 8080 --web-port 8081 --set web_password=StarkesPasswort --set block_global=false'
 Restart=on-failure
-RestartSec=5
-LimitNOFILE=65536
-PrivateTmp=true
-Environment=PATH=/root/venv-mitmproxy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RestartSec=5s
+LimitNOFILE=4096
 
 [Install]
 WantedBy=multi-user.target
-EOF
