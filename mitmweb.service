@@ -1,0 +1,18 @@
+[Unit]
+Description=mitmweb daemon (venv)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/mitmweb
+ExecStart=/root/venv-mitmproxy/bin/python /root/venv-mitmproxy/bin/mitmweb --web-host 0.0.0.0 --web-port 8081 --listen-port 8080 --set web_password=DeinStarkesPasswort --set block_global=false
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+PrivateTmp=true
+Environment=PATH=/root/venv-mitmproxy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target
+EOF
