@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -8,35 +9,43 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     ConversationHandler,
+    CallbackQueryHandler,
     filters,
 )
 
 BOT_TOKEN = "DEIN_TELEGRAM_BOT_TOKEN_HIER"
-
 MAP_DIR = os.path.join(os.path.expanduser("~"), "map")
 MAP_FILE = os.path.join(MAP_DIR, "user_map.json")
 TOKENS_DIR = os.path.join(MAP_DIR, "tokens")
 TOKENS_FILE = os.path.join(TOKENS_DIR, "user_tokens.json")
-
+RATE_FILE = os.path.join(MAP_DIR, "rate_limits.json")
+DEFAULT_TOKEN = "BOT-QWPPXCYNNMJUWGAG-X"
 WAITING_FOR_TOKEN = 1
 WAITING_FOR_IG_USERNAME = 2
+RATE_LIMIT = 5
+RATE_RESET = 3600
 
 def ensure_dirs():
     os.makedirs(MAP_DIR, exist_ok=True)
     os.makedirs(TOKENS_DIR, exist_ok=True)
-    if not os.path.exists(TOKENS_FILE):
-        with open(TOKENS_FILE, "w", encoding="utf-8") as f:
-            json.dump({}, f, indent=2)
+    for f in [TOKENS_FILE, RATE_FILE]:
+        if not os.path.exists(f):
+            with open(f, "w", encoding="utf-8") as x:
+                json.dump({}, x, indent=2)
 
-def load_map():
+def load_json(p):
     try:
-        with open(MAP_FILE, "r", encoding="utf-8") as f:
+        with open(p, "r", encoding="utf-8") as f:
             return json.load(f)
     except:
         return {}
 
+def save_json(p, data):
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
 def is_token_valid(token):
-    m = load_map()
+    m = load_json(MAP_FILE)
     for v in m.values():
         try:
             if v.get("api_key") == token:
@@ -46,47 +55,83 @@ def is_token_valid(token):
     return False
 
 def store_user_token(user_id, token):
-    try:
-        with open(TOKENS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except:
-        data = {}
+    data = load_json(TOKENS_FILE)
     data[str(user_id)] = token
-    with open(TOKENS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    save_json(TOKENS_FILE, data)
 
 def get_user_token(user_id):
-    try:
-        with open(TOKENS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get(str(user_id))
-    except:
-        return None
+    data = load_json(TOKENS_FILE)
+    return data.get(str(user_id))
+
+def check_rate_limit(user_id):
+    data = load_json(RATE_FILE)
+    u = str(user_id)
+    now = time.time()
+    if u not in data:
+        data[u] = {"count": 0, "reset": now + RATE_RESET}
+    entry = data[u]
+    if now > entry["reset"]:
+        entry["count"] = 0
+        entry["reset"] = now + RATE_RESET
+    if entry["count"] >= RATE_LIMIT:
+        save_json(RATE_FILE, data)
+        return False
+    entry["count"] += 1
+    data[u] = entry
+    save_json(RATE_FILE, data)
+    return True
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("I dont own one", url="https://vaul3t.org/dashboard")]])
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Send token", callback_data="send_token"),
+            InlineKeyboardButton("Proceed with limits", callback_data="proceed_limits")
+        ],
+        [
+            InlineKeyboardButton("Get token", url="https://vaul3t.org/dashboard")
+        ]
+    ])
     await update.message.reply_text(
-        "Hello, Please enter a valid VAUL3T API token , this will be used to make your request .",
+        "Hello,\n\nSend VAUL3T API token or proceed with rate limits\n\nRate limits : 5/h",
         reply_markup=keyboard
     )
     return WAITING_FOR_TOKEN
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if query.data == "send_token":
+        await query.message.reply_text("Please enter your VAUL3T API token.")
+        return WAITING_FOR_TOKEN
+    elif query.data == "proceed_limits":
+        store_user_token(user_id, DEFAULT_TOKEN)
+        await query.message.reply_text("Proceeding without token. You will have 5 lookups per hour.")
+        return ConversationHandler.END
+    return ConversationHandler.END
 
 async def handle_token_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     token = update.message.text.strip()
     user_id = update.effective_user.id
     if is_token_valid(token):
         store_user_token(user_id, token)
-        await update.message.reply_text("API Token Set, Use commands to serach for user")
+        await update.message.reply_text("API Token Set. You can now use /instagram.")
         return ConversationHandler.END
     else:
-        await update.message.reply_text("Token invalid. Please enter a valid token or visit the dashboard (button).")
+        await update.message.reply_text("Invalid token. Please try again or proceed with limits.")
         return WAITING_FOR_TOKEN
 
 async def instagram_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    token = get_user_token(update.effective_user.id)
+    user_id = update.effective_user.id
+    token = get_user_token(user_id)
     if not token:
-        await update.message.reply_text("You don't have a token set. Please send your VAUL3T token first (use /start).")
-        return ConversationHandler.END
+        token = DEFAULT_TOKEN
+        store_user_token(user_id, token)
+        await update.message.reply_text("No token found, proceeding with 5 lookups per hour.")
+    if token == DEFAULT_TOKEN:
+        if not check_rate_limit(user_id):
+            await update.message.reply_text("Rate limit reached (5 lookups/hour). Please wait before retrying.")
+            return ConversationHandler.END
     await update.message.reply_text("Please enter the Instagram username to search for:")
     context.user_data["vaul3t_token"] = token
     return WAITING_FOR_IG_USERNAME
@@ -153,19 +198,16 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     ensure_dirs()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CallbackQueryHandler(button_handler))
     conv_token = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={WAITING_FOR_TOKEN:[MessageHandler(filters.TEXT & (~filters.COMMAND), handle_token_message)]},
         fallbacks=[CommandHandler("cancel", cancel)],
-        name="token_conv",
-        persistent=False
     )
     conv_ig = ConversationHandler(
         entry_points=[CommandHandler("instagram", instagram_command)],
         states={WAITING_FOR_IG_USERNAME:[MessageHandler(filters.TEXT & (~filters.COMMAND), handle_ig_username)]},
         fallbacks=[CommandHandler("cancel", cancel)],
-        name="ig_conv",
-        persistent=False
     )
     app.add_handler(conv_token)
     app.add_handler(conv_ig)
