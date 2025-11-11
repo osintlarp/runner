@@ -96,31 +96,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Hello,\n\nSend VAUL3T API token or proceed with rate limits\n\nRate limits : 5/h",
         reply_markup=keyboard
     )
-    return WAITING_FOR_TOKEN
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     if query.data == "send_token":
+        context.user_data["awaiting_token"] = True
         await query.message.reply_text("Please enter your VAUL3T API token.")
-        return WAITING_FOR_TOKEN
     elif query.data == "proceed_limits":
         store_user_token(user_id, DEFAULT_TOKEN)
         await query.message.reply_text("Proceeding without token. You will have 5 lookups per hour.")
-        return ConversationHandler.END
-    return ConversationHandler.END
 
 async def handle_token_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("awaiting_token"):
+        return
     token = update.message.text.strip()
     user_id = update.effective_user.id
     if is_token_valid(token):
         store_user_token(user_id, token)
-        await update.message.reply_text("API Token Set. You can now use bot.")
-        return ConversationHandler.END
+        context.user_data.pop("awaiting_token", None)
+        await update.message.reply_text("API Token Set. You can now use /instagram or /report_reddit_user.")
     else:
         await update.message.reply_text("Invalid token. Please try again or proceed with limits.")
-        return WAITING_FOR_TOKEN
 
 async def instagram_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -248,7 +246,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CallbackQueryHandler(button_handler))
     conv_token = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[],
         states={WAITING_FOR_TOKEN:[MessageHandler(filters.TEXT & (~filters.COMMAND), handle_token_message)]},
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -265,6 +263,7 @@ def main():
     app.add_handler(conv_token)
     app.add_handler(conv_ig)
     app.add_handler(conv_reddit)
+    app.add_handler(CommandHandler("start", start))
     app.run_polling()
 
 if __name__ == "__main__":
