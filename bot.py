@@ -46,6 +46,8 @@ def save_json(p, data):
         json.dump(data, f, indent=2)
 
 def is_token_valid(token):
+    if token == DEFAULT_TOKEN:
+        return True
     m = load_json(MAP_FILE)
     for v in m.values():
         try:
