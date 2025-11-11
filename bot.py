@@ -22,6 +22,7 @@ RATE_FILE = os.path.join(MAP_DIR, "rate_limits.json")
 DEFAULT_TOKEN = "BOT-QWPPXCYNNMJUWGAG-X"
 WAITING_FOR_TOKEN = 1
 WAITING_FOR_IG_USERNAME = 2
+WAITING_FOR_REDDIT_USER = 3
 RATE_LIMIT = 5
 RATE_RESET = 3600
 
@@ -115,7 +116,7 @@ async def handle_token_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     if is_token_valid(token):
         store_user_token(user_id, token)
-        await update.message.reply_text("API Token Set. You can now use /instagram.")
+        await update.message.reply_text("API Token Set. You can now use bot.")
         return ConversationHandler.END
     else:
         await update.message.reply_text("Invalid token. Please try again or proceed with limits.")
@@ -191,6 +192,53 @@ async def handle_ig_username(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("\n".join(out_lines))
     return ConversationHandler.END
 
+async def report_reddit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    token = get_user_token(user_id)
+    if not token:
+        token = DEFAULT_TOKEN
+        store_user_token(user_id, token)
+        await update.message.reply_text("No token found, proceeding with 5 reports per hour.")
+    if token == DEFAULT_TOKEN:
+        if not check_rate_limit(user_id):
+            await update.message.reply_text("Rate limit reached (5 reports/hour). Please wait before retrying.")
+            return ConversationHandler.END
+    await update.message.reply_text("Please enter a valid Reddit user ID to report:")
+    context.user_data["vaul3t_token"] = token
+    return WAITING_FOR_REDDIT_USER
+
+async def handle_reddit_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reddit_id = update.message.text.strip()
+    token = context.user_data.get("vaul3t_token") or get_user_token(update.effective_user.id)
+    chat_id = update.effective_chat.id
+    wait_msg = await update.message.reply_text("Reporting user, please wait...")
+    url = f"https://api.vaul3t.org/v1/osint/reddit/report_user?userID={reddit_id}"
+    headers = {"Authorization": token}
+    try:
+        resp = requests.get(url, headers=headers, timeout=30)
+    except:
+        try: await context.bot.delete_message(chat_id=chat_id, message_id=wait_msg.message_id)
+        except: pass
+        await update.message.reply_text("Error, contact Admin")
+        return ConversationHandler.END
+    try: await context.bot.delete_message(chat_id=chat_id, message_id=wait_msg.message_id)
+    except: pass
+    if resp.status_code != 200:
+        await update.message.reply_text(f"Error: {resp.text}")
+        return ConversationHandler.END
+    try:
+        data = resp.json()
+    except:
+        await update.message.reply_text("Error parsing response")
+        return ConversationHandler.END
+    try:
+        report_details = data["data"]["reportUserDetails"]
+        out_text = f"__typename: {report_details.get('__typename','N/A')}\nok: {report_details.get('ok',False)}\nreported: {report_details.get('ok',False)}"
+        await update.message.reply_text(out_text)
+    except Exception as e:
+        await update.message.reply_text(f"Error processing response: {str(e)}")
+    return ConversationHandler.END
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Canceled.")
     return ConversationHandler.END
@@ -209,8 +257,14 @@ def main():
         states={WAITING_FOR_IG_USERNAME:[MessageHandler(filters.TEXT & (~filters.COMMAND), handle_ig_username)]},
         fallbacks=[CommandHandler("cancel", cancel)],
     )
+    conv_reddit = ConversationHandler(
+        entry_points=[CommandHandler("report_reddit_user", report_reddit_command)],
+        states={WAITING_FOR_REDDIT_USER: [MessageHandler(filters.TEXT & (~filters.COMMAND), handle_reddit_user)]},
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
     app.add_handler(conv_token)
     app.add_handler(conv_ig)
+    app.add_handler(conv_reddit)
     app.run_polling()
 
 if __name__ == "__main__":
