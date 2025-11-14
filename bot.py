@@ -14,7 +14,8 @@ DOMAIN = "https://vaul3t.org"
 
 USER_DIR = "/var/www/users"
 CONNECT_FILE = os.path.join(USER_DIR, "connect.json")
-MAP_FILE = "root/map/user_map.json"
+MAP_DIR = os.path.join(os.path.expanduser("~"), "map")
+MAP_FILE = os.path.join(MAP_DIR, "user_map.json")
 
 def load_json(path):
     if os.path.exists(path):
