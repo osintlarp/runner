@@ -6,6 +6,7 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     CallbackQueryHandler,
+    ConversationHandler,
     filters
 )
 
@@ -15,6 +16,8 @@ USER_DIR = "/var/www/users"
 CONNECT_FILE = os.path.join(USER_DIR, "connect.json")
 MAP_DIR = os.path.join(os.path.expanduser("~"), "map")
 MAP_FILE = os.path.join(MAP_DIR, "user_map.json")
+
+ASK_USERNAME = 1
 
 def load_json(path):
     if os.path.exists(path):
@@ -68,7 +71,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("Connect", url=link)]]
         await query.edit_message_text("Connect using this link:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def instagram_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def instagram_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = str(update.effective_user.id)
     user_map = load_json(MAP_FILE)
     connected_user = None
@@ -77,17 +80,15 @@ async def instagram_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             connected_user = v
             break
     if not connected_user:
-        text = "Hello, Please make sure to connect your VAUL3T account using /connect before executing commands\n\nAll requests will automatically be made with your VAUL3T API token.\n\nUse /connect to link your account."
-        await update.message.reply_text(text)
-        return
+        await update.message.reply_text("You must connect your VAUL3T account first.\nUse /connect")
+        return ConversationHandler.END
+    context.user_data["api_key"] = connected_user.get("api_key")
     await update.message.reply_text("Enter a valid Instagram username:")
+    return ASK_USERNAME
 
-    def check_username(msg):
-        return msg.from_user.id == update.effective_user.id
-
-    response = await context.bot.wait_for_message(filters=filters.TEXT, check=check_username)
-    username = response.text.strip()
-    api_key = connected_user.get("api_key")
+async def instagram_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.message.text.strip()
+    api_key = context.user_data.get("api_key")
     url = f"https://api.vaul3t.org/v1/osint/instagram?username={username}"
     headers = {"Authorization": api_key}
     try:
@@ -95,12 +96,15 @@ async def instagram_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = r.json()
     except Exception as e:
         await update.message.reply_text(f"Error fetching Instagram data: {e}")
-        return
+        return ConversationHandler.END
+
     if not data.get("success"):
         await update.message.reply_text("Failed to retrieve data.")
-        return
+        return ConversationHandler.END
+
     user_data = data.get("data", {})
     user_info = user_data.get("user", {})
+
     output = {
         "can_email_reset": user_data.get("can_email_reset"),
         "can_flashcall_reset": user_data.get("can_flashcall_reset"),
@@ -117,8 +121,9 @@ async def instagram_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "full_name": user_info.get("full_name"),
         "multiple_users_found": user_data.get("multiple_users_found")
     }
-    message_text = "```\n" + json.dumps(output, indent=4) + "\n```"
-    await update.message.reply_text(message_text, parse_mode="Markdown")
+
+    await update.message.reply_text("```\n" + json.dumps(output, indent=4) + "\n```", parse_mode="Markdown")
+    return ConversationHandler.END
 
 async def block_unconnected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
@@ -128,10 +133,18 @@ async def block_unconnected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Command executed successfully.")
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+instagram_conv = ConversationHandler(
+    entry_points=[CommandHandler("instagram", instagram_start)],
+    states={ASK_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, instagram_username)]},
+    fallbacks=[]
+)
+
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("connect", connect_command))
 app.add_handler(CallbackQueryHandler(button_handler))
-app.add_handler(CommandHandler("instagram", instagram_command))
+app.add_handler(instagram_conv)
 app.add_handler(MessageHandler(filters.COMMAND, block_unconnected))
 app.add_handler(MessageHandler(filters.TEXT, block_unconnected))
+
 app.run_polling()
