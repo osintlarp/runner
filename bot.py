@@ -1,6 +1,13 @@
 import os, json, secrets, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    filters
+)
 
 BOT_TOKEN = "DEIN_BOT_TOKEN"
 DOMAIN = "https://vaul3t.org"
@@ -27,7 +34,7 @@ def is_connected(telegram_id):
             return True
     return False
 
-def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "Hello, Please make sure to connect your VAUL3T account using /connect before executing commands\n\n"
         "All requests will automatically be made with your VAUL3T API token.\n\n"
@@ -41,13 +48,13 @@ def start(update: Update, context: CallbackContext):
         [InlineKeyboardButton("Connect", callback_data="connect_now")]
     ]
 
-    update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-def connect_command(update: Update, context: CallbackContext):
+async def connect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
 
     if is_connected(telegram_id):
-        update.message.reply_text("User already connected.")
+        await update.message.reply_text("User already connected.")
         return
 
     connect_data = load_json(CONNECT_FILE)
@@ -66,17 +73,17 @@ def connect_command(update: Update, context: CallbackContext):
         [InlineKeyboardButton("Connect", url=link)]
     ]
 
-    update.message.reply_text("Connect using this link:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("Connect using this link:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-def button_handler(update: Update, context: CallbackContext):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
 
     if query.data == "connect_now":
         telegram_id = query.from_user.id
 
         if is_connected(telegram_id):
-            query.edit_message_text("User already connected.")
+            await query.edit_message_text("User already connected.")
             return
 
         connect_data = load_json(CONNECT_FILE)
@@ -95,27 +102,23 @@ def button_handler(update: Update, context: CallbackContext):
             [InlineKeyboardButton("Connect", url=link)]
         ]
 
-        query.edit_message_text("Connect using this link:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("Connect using this link:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-def block_unconnected(update: Update, context: CallbackContext):
+async def block_unconnected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
 
     if not is_connected(telegram_id):
-        update.message.reply_text("You must connect your VAUL3T account first.\nUse /connect")
+        await update.message.reply_text("You must connect your VAUL3T account first.\nUse /connect")
         return
 
-    update.message.reply_text("Command executed successfully.")
+    await update.message.reply_text("Command executed successfully.")
 
-updater = Updater(BOT_TOKEN)
-dp = updater.dispatcher
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-dp.add_handler(CommandHandler("start", start))
-dp.add_handler(CommandHandler("connect", connect_command))
-dp.add_handler(MessageHandler(Filters.command, block_unconnected))
-dp.add_handler(MessageHandler(Filters.text, block_unconnected))
-dp.add_handler(MessageHandler(Filters.callback_query, button_handler))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("connect", connect_command))
+app.add_handler(CallbackQueryHandler(button_handler))
+app.add_handler(MessageHandler(filters.COMMAND, block_unconnected))
+app.add_handler(MessageHandler(filters.TEXT, block_unconnected))
 
-dp.add_handler(MessageHandler(Filters.all, block_unconnected))
-
-updater.start_polling()
-updater.idle()
+app.run_polling()
